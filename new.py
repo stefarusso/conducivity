@@ -1,31 +1,69 @@
 #!/Users/stefano/anaconda3/bin/python
 
-atomic_mass = { 'H':1.008, 'C':12.011, 'O':15.999, 'N':14.0067, 'Cl':35.453, 'Al':26.9815, 'F':19.9984 }
+#storage of atomic masses values
+atomic_mass = { 'H':1.008,
+                'C':12.011,
+                'O':15.999,
+                'N':14.0067,
+                'Al':26.9815,
+                'Cl':35.453,
+                'F':19.9984,
+                "He" : 4.00260,
+                "Li" : 7.0,
+                "Be" : 9.0121,
+                "B"  : 10.81,
+                "F"  : 18.9984,
+                "Ne" : 20.180,
+                "Na" : 22.9897,
+                "Mg" : 24.305,
+                "Al" : 26.981538,
+                "Si" : 28.085,
+                "P"  : 30.97376,
+                "S"  : 32.07,
+                "Cl" : 35.45,
+                "Ar" : 39.9,
+                "K"  : 39.0983,
+                "Ca" : 40.08,
+                "Fe" : 55.84,
+                "Cu" : 63.55,
+                "Zn" : 65.4,
+                "Br" : 79.90,
+                "Ag" : 107.868,
+                "Sn" : 118.71,
+                "I"  : 126.9045,
+                "Xe" : 131.29,
+                "Cs" : 132.9}
 
 class trajectory:
     def __init__(self, filename, format="gro"):
-        self.traj = []              # array [x,y,z] (n_frames, n_mols), [res_name] (1, n_mols)
-        self.msd = []               # array [msd] (1,t)
-        self.filename = filename    #trajectory filename
-        self.format = format        # later it will be use to implement different trajectory file formats
+        self.format = format  # later it will be use to implement different trajectory file formats
         self.logger = Logger()
-    def load(self):
+        self.traj = self.load_gro(filename) # array [x,y,z] (n_frames, n_mols), [res_name] (1, n_mols)
+        self.msd = []                       # array [msd] (1,t)
+
+
+    def load_gro(self,filename):
         #trajectory loading routine
+        #GROMACS gro format trajectory
+        self.logger.print("Starting Loading")
         import numpy as np
         try:
-            with open(self.filename, 'r') as file:
+            with open(filename, 'r') as file:
                 # repeat for every frame up to the EOF
-                CM = []  # easier solution for appending np.arrays to an empty array without defining dimension first-hand.
+                CM = []  # it will append the center of mass for each residue
                 while True:
-                    read_line(file)  # first line is a comment
-                    n_atoms = int(read_line(file).strip())
-                    sum_cm = np.zeros(4)  # x,y,z, mass
-                    res_num_count = 1
-                    cm = np.empty((0, 3), float)  # x,y,z
+                    read_line(file)                         # first line is a comment
+                    n_atoms = int(read_line(file).strip())  #atoms in the frame
+                    sum_cm = np.zeros(4)                    # x,y,z, molecular mass
+                    res_num_count = 1                       # counter of residues, starts from 1
+                    cm = np.empty((0, 3), float)        # x,y,z  one for each residue in the frame
                     res_names = []
-                    for i in range(0, n_atoms):
+                    res_name_last = []                      #keeps resname in memory
+                    for i in range(0, n_atoms): #atoms in frame
                         x, y, z, res_num, res_name, atom_name = parsline(file)
-                        if res_num_count == res_num:  # same molecule
+                        if not res_name_last: #if empty(first atom)
+                            res_name_last = res_name
+                        if res_num_count == res_num:  # same residue
                             sum_cm[0] += x * atomic_mass[atom_name]
                             sum_cm[1] += y * atomic_mass[atom_name]
                             sum_cm[2] += z * atomic_mass[atom_name]
@@ -35,19 +73,20 @@ class trajectory:
                                 res_names.append(res_name)
                             else:
                                 pass
-                        else:  # new molecule
-                            res_num_count = res_num  # update the counter
-                            cm = np.append(cm, np.reshape(sum_cm[0:3] / sum_cm[3], (1, 3)),
-                                           axis=0)  # save center of mass for the molecule
+                        else:  # new molecule found
+                            res_num_count = res_num            # update the counter
+                            cm = np.append(cm, np.reshape(sum_cm[0:3] / sum_cm[3], (1, 3)), axis=0)  # save cm for the molecule before
+                            res_names.append(res_name_last)  # save res_name
+                            #restart sum_cm
+                            res_name_last = res_name        #update memory for name
                             sum_cm = np.array(
                                 [x * atomic_mass[atom_name], y * atomic_mass[atom_name], z * atomic_mass[atom_name],
                                  atomic_mass[atom_name]])  # start new molecule
-                            res_names.append(res_name)
-                    read_line(file)  # last line is a cell dimensions
+                    read_line(file)  # last line have cell dimensions
                     CM.append(cm)
         except End_of_Loop:
             self.logger.print("End of file reached")
-            self.traj = np.array(CM), np.array(res_names)
+            return np.array(CM), np.array(res_names)
 
 class Logger():
     def __init__(self):
@@ -146,27 +185,26 @@ def regression(msd, t, scaling=0.3):
     print(D)
     return [msd_pred, t_pred], [slope, intercept]
 
-#TESTING------------------------------------------------------------------
-traj = trajectory("test_files/test.gro")
-traj.load()
-coord, res_names = traj.traj
-
-print("Matrix:")
-print(coord.shape)
-print("--------")
-import numpy as np
-MSD = msd_ii(coord[:,res_names=="emi",:],slice_dimension=100,skip=0)
-t=np.arange(len(MSD))
-print(MSD)
-print("__________")
-#msd_pred, var_regression =regression(MSD, t)
-
-import matplotlib.pyplot as plt
-plt.plot(t,MSD, label="MSD")
-import pandas as pd
-travis = pd.read_csv("test_files/msd_C6H11N2_#2.csv", header=0, delimiter=";")
-travis.columns=["r","msd","int"]
-print(travis)
-plt.plot(travis["r"],travis["msd"],label="TRAVIS")
-plt.legend()
-plt.show()
+if __name__ == "__main__":
+    #TESTING
+    traj = trajectory("test_files/test.gro")
+    coord, res_names = traj.traj
+    print("Matrix:")
+    print(coord.shape)
+    print("--------")
+    import numpy as np
+    MSD = msd_ii(coord[:,res_names=="emi",:],slice_dimension=100,skip=0)
+    t=np.arange(len(MSD))
+    print(MSD)
+    print("__________")
+    #msd_pred, var_regression =regression(MSD, t)
+    #PLOTTING
+    # import matplotlib.pyplot as plt
+    # plt.plot(t,MSD, label="MSD")
+    # import pandas as pd
+    # travis = pd.read_csv("test_files/msd_C6H11N2_#2.csv", header=0, delimiter=";")
+    # travis.columns=["r","msd","int"]
+    # print(travis)
+    # plt.plot(travis["r"],travis["msd"],label="TRAVIS")
+    # plt.legend()
+    # plt.show()
