@@ -1,4 +1,5 @@
 #!/Users/stefano/anaconda3/bin/python
+import numpy as np
 
 #storage of atomic masses values
 atomic_mass = { 'H':1.008,
@@ -6,8 +7,6 @@ atomic_mass = { 'H':1.008,
                 'O':15.999,
                 'N':14.0067,
                 'Al':26.9815,
-                'Cl':35.453,
-                'F':19.9984,
                 "He" : 4.00260,
                 "Li" : 7.0,
                 "Be" : 9.0121,
@@ -16,7 +15,6 @@ atomic_mass = { 'H':1.008,
                 "Ne" : 20.180,
                 "Na" : 22.9897,
                 "Mg" : 24.305,
-                "Al" : 26.981538,
                 "Si" : 28.085,
                 "P"  : 30.97376,
                 "S"  : 32.07,
@@ -34,6 +32,12 @@ atomic_mass = { 'H':1.008,
                 "Xe" : 131.29,
                 "Cs" : 132.9}
 
+def update(cm, sum_cm, masses, res_name, res_names_frame):
+    cm = np.append(cm, np.reshape(sum_cm[0:3] / sum_cm[3], (1, 3)), axis=0)
+    masses.append(sum_cm[3])
+    res_names_frame.append(res_name)
+    return cm, masses, res_names_frame
+
 class trajectory:
     def __init__(self, filename, format="gro"):
         self.format = format  # later it will be use to implement different trajectory file formats
@@ -41,24 +45,29 @@ class trajectory:
         self.traj = self.load_gro(filename) # array [x,y,z] (n_frames, n_mols), [res_name] (1, n_mols)
         self.msd = []                       # array [msd] (1,t)
 
-
+    def update(self):
+        cm = np.append(cm, np.reshape(sum_cm[0:3] / sum_cm[3], (1, 3)), axis=0)
+        masses.append(sum_cm[3])
+        res_names_frame.append(res_name)
+        return cm, sum_cm, masses, res_name, res_names_frame
     def load_gro(self,filename):
         #trajectory loading routine
         #GROMACS gro format trajectory
-        self.logger.print("Starting Loading")
-        import numpy as np
+        self.logger.print(f"Trajectory loading: {self.format} format")
         try:
             with open(filename, 'r') as file:
                 # repeat for every frame up to the EOF
-                CM = []  # it will append the center of mass for each residue
+                CM = []         # it will append the center of mass for each residue
+                res_names = []  # array of every frame
                 while True:
                     read_line(file)                         # first line is a comment
                     n_atoms = int(read_line(file).strip())  #atoms in the frame
                     sum_cm = np.zeros(4)                    # x,y,z, molecular mass
                     res_num_count = 1                       # counter of residues, starts from 1
                     cm = np.empty((0, 3), float)        # x,y,z  one for each residue in the frame
-                    res_names = []
+                    res_names_frame = []                    # residue names of the frame
                     res_name_last = []                      #keeps resname in memory
+                    masses = []                             #keep record of molecular masses
                     for i in range(0, n_atoms): #atoms in frame
                         x, y, z, res_num, res_name, atom_name = parsline(file)
                         if not res_name_last: #if empty(first atom)
@@ -69,24 +78,27 @@ class trajectory:
                             sum_cm[2] += z * atomic_mass[atom_name]
                             sum_cm[3] += atomic_mass[atom_name]
                             if i == n_atoms - 1:  # last line before end of frame
-                                cm = np.append(cm, np.reshape(sum_cm[0:3] / sum_cm[3], (1, 3)), axis=0)
-                                res_names.append(res_name)
+                                cm, masses, res_names_frame = update(cm, sum_cm, masses, res_name, res_names_frame)
                             else:
                                 pass
                         else:  # new molecule found
                             res_num_count = res_num            # update the counter
-                            cm = np.append(cm, np.reshape(sum_cm[0:3] / sum_cm[3], (1, 3)), axis=0)  # save cm for the molecule before
-                            res_names.append(res_name_last)  # save res_name
+                            cm, masses, res_names_frame = update(cm, sum_cm, masses, res_name, res_names_frame)
                             #restart sum_cm
                             res_name_last = res_name        #update memory for name
                             sum_cm = np.array(
                                 [x * atomic_mass[atom_name], y * atomic_mass[atom_name], z * atomic_mass[atom_name],
                                  atomic_mass[atom_name]])  # start new molecule
+                            if i == n_atoms - 1: #if last residue is only one atom
+                                cm, masses, res_names_frame = update(cm, sum_cm, masses, res_name, res_names_frame)
                     read_line(file)  # last line have cell dimensions
+                    res_names.append(res_names_frame)
                     CM.append(cm)
         except End_of_Loop:
-            self.logger.print("End of file reached")
-            return np.array(CM), np.array(res_names)
+            CM = np.array(CM)
+            res_names = np.array(res_names)
+            self.logger.print(f"Total Frame Processed: {CM.shape[0]}\nNumber of Molecules: {CM.shape[1]}\nMolecular Types: {np.unique(res_names)}")
+            return np.array(CM), np.array(res_names), np.array(masses)
 
 class Logger():
     def __init__(self):
@@ -118,19 +130,19 @@ def parsline(file):
         res_num = int(line[0:5])
         res_name, atom_name  = [ line[c:c+5].strip()  for c in range(5,5*2+1,5)]
         atom_name = ''.join([ i for i in atom_name if not i.isdigit()]) #remove digits from the atom name
-        atom_num = int(line[5*3:5*3+5]) 
+        atom_num = int(line[5*3:5*3+5])
         x, y, z = [ float(line[c:c+8])  for c in range(5*4,5*4+8*3,8)]
         #end gromacs
         return x, y, z, res_num, res_name, atom_name
 
 def read_line(f):
-	#Is needed to check when the file finish and the exception need to being handled
-	line=f.readline()
-	#check is line is empty meaning that the file end is reach
-	if not line:
-		raise End_of_Loop
-	else:
-		return line
+    #Is needed to check when the file finish and the exception need to being handled
+    line=f.readline()
+    #check is line is empty meaning that the file end is reach
+    if not line:
+        raise End_of_Loop
+    else:
+        return line
 
 def msd_ii(coord,slice_dimension,skip=0):
     #Self diffusion (i=j) MSD
@@ -187,16 +199,18 @@ def regression(msd, t, scaling=0.3):
 
 if __name__ == "__main__":
     #TESTING
-    traj = trajectory("test_files/test.gro")
-    coord, res_names = traj.traj
-    print("Matrix:")
+    obj = trajectory("test_files/#test.gro.1#")
+    coord, res_names, masses = obj.traj
+    print("Matrix: (Frame, Molecules, Coordinates)")
     print(coord.shape)
     print("--------")
-    import numpy as np
-    MSD = msd_ii(coord[:,res_names=="emi",:],slice_dimension=100,skip=0)
-    t=np.arange(len(MSD))
-    print(MSD)
-    print("__________")
+    print(res_names)
+    #print(coord)
+    #import numpy as np
+    #MSD = msd_ii(coord[:,res_names=="emi",:],slice_dimension=100,skip=0)
+    #t=np.arange(len(MSD))
+    #print(MSD)
+    #print("__________")
     #msd_pred, var_regression =regression(MSD, t)
     #PLOTTING
     # import matplotlib.pyplot as plt
