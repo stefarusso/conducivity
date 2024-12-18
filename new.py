@@ -32,11 +32,10 @@ atomic_mass = { 'H':1.008,
                 "Xe" : 131.29,
                 "Cs" : 132.9}
 
-def update(cm, sum_cm, masses, res_name, res_names_frame):
+def update(cm, sum_cm, res_name, res_names_frame):
     cm = np.append(cm, np.reshape(sum_cm[0:3] / sum_cm[3], (1, 3)), axis=0)
-    masses.append(sum_cm[3])
     res_names_frame.append(res_name)
-    return cm, masses, res_names_frame
+    return cm, res_names_frame
 
 class trajectory:
     def __init__(self, filename, format="gro"):
@@ -47,12 +46,13 @@ class trajectory:
 
     def update(self):
         cm = np.append(cm, np.reshape(sum_cm[0:3] / sum_cm[3], (1, 3)), axis=0)
-        masses.append(sum_cm[3])
         res_names_frame.append(res_name)
         return cm, sum_cm, masses, res_name, res_names_frame
     def load_gro(self,filename):
         #trajectory loading routine
         #GROMACS gro format trajectory
+        #   output:
+        #   data (n_frame, n_mols, xyz), residue names (n_frames,n_mols)
         self.logger.print(f"Trajectory loading: {self.format} format")
         try:
             with open(filename, 'r') as file:
@@ -67,7 +67,6 @@ class trajectory:
                     cm = np.empty((0, 3), float)        # x,y,z  one for each residue in the frame
                     res_names_frame = []                    # residue names of the frame
                     res_name_last = []                      #keeps resname in memory
-                    masses = []                             #keep record of molecular masses
                     for i in range(0, n_atoms): #atoms in frame
                         x, y, z, res_num, res_name, atom_name = parsline(file)
                         if not res_name_last: #if empty(first atom)
@@ -78,19 +77,19 @@ class trajectory:
                             sum_cm[2] += z * atomic_mass[atom_name]
                             sum_cm[3] += atomic_mass[atom_name]
                             if i == n_atoms - 1:  # last line before end of frame
-                                cm, masses, res_names_frame = update(cm, sum_cm, masses, res_name, res_names_frame)
+                                cm, res_names_frame = update(cm, sum_cm, res_name, res_names_frame)
                             else:
                                 pass
                         else:  # new molecule found
                             res_num_count = res_num            # update the counter
-                            cm, masses, res_names_frame = update(cm, sum_cm, masses, res_name, res_names_frame)
+                            cm, res_names_frame = update(cm, sum_cm, res_name, res_names_frame)
                             #restart sum_cm
                             res_name_last = res_name        #update memory for name
                             sum_cm = np.array(
                                 [x * atomic_mass[atom_name], y * atomic_mass[atom_name], z * atomic_mass[atom_name],
                                  atomic_mass[atom_name]])  # start new molecule
                             if i == n_atoms - 1: #if last residue is only one atom
-                                cm, masses, res_names_frame = update(cm, sum_cm, masses, res_name, res_names_frame)
+                                cm, res_names_frame = update(cm, sum_cm, res_name, res_names_frame)
                     read_line(file)  # last line have cell dimensions
                     res_names.append(res_names_frame)
                     CM.append(cm)
@@ -98,7 +97,7 @@ class trajectory:
             CM = np.array(CM)
             res_names = np.array(res_names)
             self.logger.print(f"Total Frame Processed: {CM.shape[0]}\nNumber of Molecules: {CM.shape[1]}\nMolecular Types: {np.unique(res_names)}")
-            return np.array(CM), np.array(res_names), np.array(masses)
+            return np.array(CM), np.array(res_names)
 
 class Logger():
     def __init__(self):
@@ -200,11 +199,11 @@ def regression(msd, t, scaling=0.3):
 if __name__ == "__main__":
     #TESTING
     obj = trajectory("test_files/#test.gro.1#")
-    coord, res_names, masses = obj.traj
-    print("Matrix: (Frame, Molecules, Coordinates)")
-    print(coord.shape)
-    print("--------")
-    print(res_names)
+    coord, res_names = obj.traj
+    #print("Matrix: (Frame, Molecules, Coordinates)")
+    #print(coord.shape)
+    #print("--------")
+    #print(res_names)
     #print(coord)
     #import numpy as np
     #MSD = msd_ii(coord[:,res_names=="emi",:],slice_dimension=100,skip=0)
