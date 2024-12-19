@@ -91,14 +91,16 @@ class trajectory:
                     if not comp_mem or comp_mem == res_names_frame:
                         res_names.append(res_names_frame)
                         comp_mem = res_names_frame
+                        CM.append(cm)
                     else:
                         raise Exception(f"!!! ERROR !!! : Composition has changed during the trajectory check frame {frame_count}")
-                    CM.append(cm)
         except End_of_Loop:
-            print(np.unique(res_names[0],return_counts=True))
             CM = np.array(CM)
             res_names = np.array(res_names)
-            self.logger.print(f"Coordinates Shape: {CM.shape}\nTotal Frame Processed: {CM.shape[0]}\nNumber of Molecules: {CM.shape[1]}\nMolecular Types: {np.unique(res_names)}")
+            uniques = np.unique(res_names[0],return_counts=True)
+            self.composition = dict(zip( uniques[0] , uniques[1] ))
+            print_string = "\t".join([ f"{k}:{v}" for k,v in self.composition.items() ])
+            self.logger.print(f"Coordinates Shape: {CM.shape}\nTotal Frame Processed: {CM.shape[0]}\nNumber of Molecules: {CM.shape[1]}\nMolecular Types:\t{print_string}")
             return np.array(CM), np.array(res_names)
 
 class Logger():
@@ -146,33 +148,42 @@ def read_line(f):
         return line
 
 def msd_ii(coord,res_name,slice_dimension,skip=0):
-    #   Self-diffusion (i=j) MSD
-    #   -   Coordinates need to be filtered from the same molecule residue type.
-    #       Have [Frame, N, 3] shape
-    #   -   Skips are the line skipped while sliding the window matrix
-    #   -   slice_dimension is the correlation depth (in frame lines number) of the sliding window
-
+    '''
+       Self-diffusion coefficient (i=j) from MSD
+       INPUT
+       -   Coordinates need to be filtered from the same molecule residue type "res_name".
+            Have [Frame, N, 3] shape
+       -   "skip" are the line skipped while sliding the window matrix
+       -   "slice_dimension" is the correlation depth (in frame lines number) of the sliding window
+       -    TO-BE-DONE:
+                - ask to the user the time_step between frame in nm
+                - NOT HERE ON DIFFUSION REGRESSION. multiply product r_quad to the charge integer of the mol (for now i have assume is 1)
+       OUTPUT
+       -    msd, np array [n_windows,1]
+    '''
     # number of columns n (molecules) and number of frames f
-    f, n = coord[:,:,0].shape
+    frames, n_mols = coord.shape[0:2]
     #  sliding windows dimensions : frames, N
-    n_windows = ((f - slice_dimension) // (skip + 1 )) + 1      # +1 is needed for taking into account the first frame
-    R=np.zeros((n_windows,n*slice_dimension))
+    n_windows = ((frames - slice_dimension) // (skip + 1 )) + 1      # +1 is needed for taking into account the first frame
+    R = np.zeros(  ( n_windows , n_mols*slice_dimension )  )
     #loop repeated for the 3 component [X,Y,Z]
     for i in range(coord.shape[-1]):
+        #position are in nm (GROMACS format)
         X = coord[:,:,i]
-        first_idx = np.arange(slice_dimension*n)                      # First index array of the sliding window, flattened
-        idx_matrix = first_idx[None,:] + n*(skip+1)*np.arange(n_windows)[:,None]
+        first_idx = np.arange(n_mols * slice_dimension)                      # index array of the first sliding window, flattened
+        idx_matrix = first_idx[None,:] + n_mols * (skip+1) * np.arange(n_windows)[:,None]
         windows = X.flatten()[idx_matrix]
-        X0 = - windows[:,:n]
-        X0 = np.hstack([X0 for i in range(slice_dimension)])
-        r = np.sum((windows,X0),axis=0)
-        r_quad = np.multiply(r,r)
-        R = np.sum((R,r_quad),axis=0)
-    #mean over all the windows
-    msd = np.mean(R,axis=0).reshape(slice_dimension,n)
-    #mean over all molecules
+        X0 = - windows[ : , : n_mols]
+        X0 = np.hstack([X0 for i in range(slice_dimension)])    # columnwise stacking of the same submatrix of the first frame of each windows
+        r = np.sum((windows,X0),axis=0)                     #elementwise sum
+        r_quad = np.multiply(r,r)                              #elemetwise product
+        R = np.sum((R,r_quad),axis=0)                       #coordinate sum    DeltaR2 = DeltaX2 + DeltaY2 + DeltaZ2
+    # mean over all the windows
+    msd = np.mean(R,axis=0)
+    # mean over all molecules
+    msd = msd.reshape(slice_dimension , n_mols)
     msd = np.mean(msd,axis=1)
-    #Mean square deviation in nm^2, instead t needs to be ask to the user
+    # Mean square deviation in nm^2, instead t needs to be ask to the user
     return msd*1000000 #nm^2 -> pm^2
 
 def regression(msd, t, scaling=0.3):
@@ -204,9 +215,14 @@ if __name__ == "__main__":
     obj = trajectory("test_files/#test.gro.1#")
     coord, res_names = obj.traj
     #print(coord[res_names=='al2'].shape)
-    print(coord)
-    print(res_names.shape)
-    print(coord[res_names=='al2'])
+    #print(coord[-1])
+    #print(res_names.shape)
+
+    # select portion of traj of al2
+    coord = coord[res_names=='al2'].reshape( (coord.shape[0],obj.composition['al2'],3) )
+    msd = msd_ii(coord, 'al2', slice_dimension=3, skip=0)
+    print(msd)
+
     #MSD = msd_ii(coord[:,res_names=="emi",:],slice_dimension=100,skip=0)
     #t=np.arange(len(MSD))
     #print(MSD)
