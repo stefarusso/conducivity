@@ -43,11 +43,6 @@ class trajectory:
         self.logger = Logger()
         self.traj = self.load_gro(filename) # array [x,y,z] (n_frames, n_mols), [res_name] (1, n_mols)
         self.msd = []                       # array [msd] (1,t)
-
-    def update(self):
-        cm = np.append(cm, np.reshape(sum_cm[0:3] / sum_cm[3], (1, 3)), axis=0)
-        res_names_frame.append(res_name)
-        return cm, sum_cm, masses, res_name, res_names_frame
     def load_gro(self,filename):
         #trajectory loading routine
         #GROMACS gro format trajectory
@@ -59,18 +54,19 @@ class trajectory:
                 # repeat for every frame up to the EOF
                 CM = []         # it will append the center of mass for each residue
                 res_names = []  # array of every frame
+                comp_mem = []   # check if composition change between frames
+                frame_count = 0
                 while True:
+                    frame_count += 1
                     read_line(file)                         # first line is a comment
                     n_atoms = int(read_line(file).strip())  #atoms in the frame
                     sum_cm = np.zeros(4)                    # x,y,z, molecular mass
                     res_num_count = 1                       # counter of residues, starts from 1
                     cm = np.empty((0, 3), float)        # x,y,z  one for each residue in the frame
                     res_names_frame = []                    # residue names of the frame
-                    res_name_last = []                      #keeps resname in memory
-                    for i in range(0, n_atoms): #atoms in frame
+                    #every atom in Frame
+                    for i in range(0, n_atoms):
                         x, y, z, res_num, res_name, atom_name = parsline(file)
-                        if not res_name_last: #if empty(first atom)
-                            res_name_last = res_name
                         if res_num_count == res_num:  # same residue
                             sum_cm[0] += x * atomic_mass[atom_name]
                             sum_cm[1] += y * atomic_mass[atom_name]
@@ -84,19 +80,25 @@ class trajectory:
                             res_num_count = res_num            # update the counter
                             cm, res_names_frame = update(cm, sum_cm, res_name, res_names_frame)
                             #restart sum_cm
-                            res_name_last = res_name        #update memory for name
                             sum_cm = np.array(
                                 [x * atomic_mass[atom_name], y * atomic_mass[atom_name], z * atomic_mass[atom_name],
                                  atomic_mass[atom_name]])  # start new molecule
                             if i == n_atoms - 1: #if last residue is only one atom
                                 cm, res_names_frame = update(cm, sum_cm, res_name, res_names_frame)
                     read_line(file)  # last line have cell dimensions
-                    res_names.append(res_names_frame)
+
+                    # make sure composition don't change between frames
+                    if not comp_mem or comp_mem == res_names_frame:
+                        res_names.append(res_names_frame)
+                        comp_mem = res_names_frame
+                    else:
+                        raise Exception(f"!!! ERROR !!! : Composition has changed during the trajectory check frame {frame_count}")
                     CM.append(cm)
         except End_of_Loop:
+            print(np.unique(res_names[0],return_counts=True))
             CM = np.array(CM)
             res_names = np.array(res_names)
-            self.logger.print(f"Total Frame Processed: {CM.shape[0]}\nNumber of Molecules: {CM.shape[1]}\nMolecular Types: {np.unique(res_names)}")
+            self.logger.print(f"Coordinates Shape: {CM.shape}\nTotal Frame Processed: {CM.shape[0]}\nNumber of Molecules: {CM.shape[1]}\nMolecular Types: {np.unique(res_names)}")
             return np.array(CM), np.array(res_names)
 
 class Logger():
@@ -143,14 +145,15 @@ def read_line(f):
     else:
         return line
 
-def msd_ii(coord,slice_dimension,skip=0):
-    #Self diffusion (i=j) MSD
-    #coord from the same molecule residue type. Have [Frame, N, 3] shape
-    #skip are the line skipped while sliding the window matrix
-    #slice_dimension is the correlation depth (in frame lines number) of the sliding window
-    import numpy as np
-    #MSD Vectorization
-    f, n = coord[:,:,0].shape                                       # number of columns n (molecules) and number of frames f
+def msd_ii(coord,res_name,slice_dimension,skip=0):
+    #   Self-diffusion (i=j) MSD
+    #   -   Coordinates need to be filtered from the same molecule residue type.
+    #       Have [Frame, N, 3] shape
+    #   -   Skips are the line skipped while sliding the window matrix
+    #   -   slice_dimension is the correlation depth (in frame lines number) of the sliding window
+
+    # number of columns n (molecules) and number of frames f
+    f, n = coord[:,:,0].shape
     #  sliding windows dimensions : frames, N
     n_windows = ((f - slice_dimension) // (skip + 1 )) + 1      # +1 is needed for taking into account the first frame
     R=np.zeros((n_windows,n*slice_dimension))
@@ -200,12 +203,10 @@ if __name__ == "__main__":
     #TESTING
     obj = trajectory("test_files/#test.gro.1#")
     coord, res_names = obj.traj
-    #print("Matrix: (Frame, Molecules, Coordinates)")
-    #print(coord.shape)
-    #print("--------")
-    #print(res_names)
-    #print(coord)
-    #import numpy as np
+    #print(coord[res_names=='al2'].shape)
+    print(coord)
+    print(res_names.shape)
+    print(coord[res_names=='al2'])
     #MSD = msd_ii(coord[:,res_names=="emi",:],slice_dimension=100,skip=0)
     #t=np.arange(len(MSD))
     #print(MSD)
