@@ -42,6 +42,11 @@ class trajectory:
         self.format = format  # later it will be use to implement different trajectory file formats
         self.logger = Logger()
         self.traj = self.load_gro(filename) # array [x,y,z] (n_frames, n_mols), [res_name] (1, n_mols)
+        #print msd for one of self.composition dictionary
+        res_name = list(self.composition.keys())[0]
+        print(res_name)
+        msd = self.msd_ii(   res_name   )
+        print(    )
         self.msd = []                       # array [msd] (1,t)
     def load_gro(self,filename):
         #trajectory loading routine
@@ -102,6 +107,49 @@ class trajectory:
             print_string = "\t".join([ f"{k}:{v}" for k,v in self.composition.items() ])
             self.logger.print(f"Coordinates Shape: {CM.shape}\nTotal Frame Processed: {CM.shape[0]}\nNumber of Molecules: {CM.shape[1]}\nMolecular Types:\t{print_string}")
             return np.array(CM), np.array(res_names)
+
+    def msd_ii(self, slice_dimension=3, skip=0):
+        '''
+           Self-diffusion coefficient (i=j) from MSD
+           INPUT
+           -   Coordinates need to be filtered from the same molecule residue type "res_name".
+                Have [Frame, N, 3] shape
+           -   "skip" are the line skipped while sliding the window matrix
+           -   "slice_dimension" is the correlation depth (in frame lines number) of the sliding window
+           -    TO-BE-DONE:
+                    - ADD filter for resname on trajectory
+                    - ask to the user the time_step between frame in nm and slice_dimension
+                    - Check if slice_dimension is lower than frames,
+                    - NOT HERE ON DIFFUSION REGRESSION. multiply product r_quad to the charge integer of the mol (for now i have assume is 1)
+           OUTPUT
+           -    msd, np array [n_windows,1]
+        '''
+        # number of columns n (molecules) and number of frames f
+        frames, n_mols = self.traj[0].shape[0:2]
+        #  sliding windows dimensions : frames, N
+        n_windows = ((frames - slice_dimension) // (
+                    skip + 1)) + 1  # +1 is needed for taking into account the first frame
+        R = np.zeros((n_windows, n_mols * slice_dimension))
+        # loop repeated for the 3 component [X,Y,Z]
+        for i in range(coord.shape[-1]):
+            # position are in nm (GROMACS format)
+            X = coord[:, :, i]
+            first_idx = np.arange(n_mols * slice_dimension)  # index array of the first sliding window, flattened
+            idx_matrix = first_idx[None, :] + n_mols * (skip + 1) * np.arange(n_windows)[:, None]
+            windows = X.flatten()[idx_matrix]
+            X0 = - windows[:, : n_mols]
+            X0 = np.hstack([X0 for i in range(
+                slice_dimension)])  # columnwise stacking of the same submatrix of the first frame of each windows
+            r = np.sum((windows, X0), axis=0)  # elementwise sum
+            r_quad = np.multiply(r, r)  # elemetwise product
+            R = np.sum((R, r_quad), axis=0)  # coordinate sum    DeltaR2 = DeltaX2 + DeltaY2 + DeltaZ2
+        # mean over all the windows
+        msd = np.mean(R, axis=0)
+        # mean over all molecules
+        msd = msd.reshape(slice_dimension, n_mols)
+        msd = np.mean(msd, axis=1)
+        # Mean square deviation in nm^2, instead t needs to be ask to the user
+        return msd * 1000000  # nm^2 -> pm^2
 
 class Logger():
     def __init__(self):
