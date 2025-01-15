@@ -103,7 +103,6 @@ class trajectory:
                             res_name_old = res_name        # update resname
                             if i == n_atoms - 1: #if last residue is only one atom
                                 cm, res_names_frame = update(cm, sum_cm, res_name, res_names_frame)
-                    print(res_names_frame)
                     read_line(file)  # last line have cell dimensions
 
                     # make sure composition don't change between frames
@@ -158,15 +157,17 @@ class trajectory:
             X0 = np.hstack([X0 for i in range(
                 slice_dimension)])  # columnwise stacking of the same submatrix of the first frame of each windows
             r = np.sum((windows, X0), axis=0)  # elementwise sum
-            r_quad = np.multiply(r, r)  # elemetwise product
+            r_quad = np.multiply(r, r)  # elementwise self product
+            print(r_quad)
             R = np.sum((R, r_quad), axis=0)  # coordinate sum    DeltaR2 = DeltaX2 + DeltaY2 + DeltaZ2
+            print(R)
+            print("------")
         # mean over all the windows
-        msd = np.mean(R, axis=0)
+        msd = np.mean(R, axis=0) #it's flatten
         # mean over all molecules
         msd = msd.reshape(slice_dimension, n_mols)
-        msd = np.mean(msd, axis=1)
-        # Mean square deviation in nm^2, instead t needs to be ask to the user
-        return msd * 1000000  # nm^2 -> pm^2
+        msd = np.mean(msd, axis=1)   #mean over molecules
+        return msd  # pm^2
 
 class Logger():
     def __init__(self):
@@ -277,7 +278,7 @@ def regression(msd, t, scaling=0.3):
 
 if __name__ == "__main__":
     #TESTING
-    obj = trajectory("test_files/tmp.gro")
+    obj = trajectory("test_files/unwrap.gro")
     coord, res_names = obj.traj
 
     #print(coord[res_names=='al2'].shape)
