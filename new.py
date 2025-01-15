@@ -43,11 +43,20 @@ class trajectory:
         self.logger = Logger()
         self.traj = self.load_gro(filename) # array [x,y,z] (n_frames, n_mols), [res_name] (1, n_mols)
         #print msd for one of self.composition dictionary
-        res_name = list(self.composition.keys())[0]
-        print(res_name)
-        msd = self.msd_ii(   res_name   )
-        print(    )
-        self.msd = []                       # array [msd] (1,t)
+        res_names = list(self.composition.keys())
+        coord, tmp = self.traj
+        res_name = res_names[0]
+        self.logger.print("res_name selected: " + res_name)
+        coord_section = coord[tmp==res_name].reshape( (coord.shape[0],self.composition[res_name],3)) # numpy try to fltten in 2D every try so it is needed to reshape the slice of the trajectory
+        self.logger.print(coord_section.shape)
+
+        #ask for timestep in ps
+        self.dt = 1
+
+
+        msd = self.msd_ii(coord_section)
+        print(msd)
+        #self.msd = []                       # array [msd] (1,t)
     def load_gro(self,filename):
         #trajectory loading routine
         #GROMACS gro format trajectory
@@ -64,12 +73,14 @@ class trajectory:
                 while True:
                     frame_count += 1
                     read_line(file)                         # first line is a comment
-                    n_atoms = int(read_line(file).strip())  #atoms in the frame
+                    n_atoms = int(read_line(file).strip())  # atoms in the frame
                     sum_cm = np.zeros(4)                    # x,y,z, molecular mass
+                    #first residue
                     res_num_count = 1                       # counter of residues, starts from 1
-                    cm = np.empty((0, 3), float)        # x,y,z  one for each residue in the frame
+                    cm = np.empty((0, 3), float)     # x,y,z  one for each residue in the frame
                     res_names_frame = []                    # residue names of the frame
-                    #every atom in Frame
+                    res_name_old = ""                       # memory for resnames
+                    # every atom in Frame
                     for i in range(0, n_atoms):
                         x, y, z, res_num, res_name, atom_name = parsline(file)
                         if res_num_count == res_num:  # same residue
@@ -77,19 +88,22 @@ class trajectory:
                             sum_cm[1] += y * atomic_mass[atom_name]
                             sum_cm[2] += z * atomic_mass[atom_name]
                             sum_cm[3] += atomic_mass[atom_name]
+                            res_name_old = res_name
                             if i == n_atoms - 1:  # last line before end of frame
                                 cm, res_names_frame = update(cm, sum_cm, res_name, res_names_frame)
                             else:
                                 pass
                         else:  # new molecule found
                             res_num_count = res_num            # update the counter
-                            cm, res_names_frame = update(cm, sum_cm, res_name, res_names_frame)
+                            cm, res_names_frame = update(cm, sum_cm, res_name_old, res_names_frame) #save old residue
                             #restart sum_cm
                             sum_cm = np.array(
                                 [x * atomic_mass[atom_name], y * atomic_mass[atom_name], z * atomic_mass[atom_name],
                                  atomic_mass[atom_name]])  # start new molecule
+                            res_name_old = res_name        # update resname
                             if i == n_atoms - 1: #if last residue is only one atom
                                 cm, res_names_frame = update(cm, sum_cm, res_name, res_names_frame)
+                    print(res_names_frame)
                     read_line(file)  # last line have cell dimensions
 
                     # make sure composition don't change between frames
@@ -108,12 +122,12 @@ class trajectory:
             self.logger.print(f"Coordinates Shape: {CM.shape}\nTotal Frame Processed: {CM.shape[0]}\nNumber of Molecules: {CM.shape[1]}\nMolecular Types:\t{print_string}")
             return np.array(CM), np.array(res_names)
 
-    def msd_ii(self, slice_dimension=3, skip=0):
+    def msd_ii(self,traj, slice_dimension=3, skip=0):
         '''
            Self-diffusion coefficient (i=j) from MSD
            INPUT
            -   Coordinates need to be filtered from the same molecule residue type "res_name".
-                Have [Frame, N, 3] shape
+                Have [Frame, N, 3] shape. N all res_name replicas
            -   "skip" are the line skipped while sliding the window matrix
            -   "slice_dimension" is the correlation depth (in frame lines number) of the sliding window
            -    TO-BE-DONE:
@@ -123,17 +137,20 @@ class trajectory:
                     - NOT HERE ON DIFFUSION REGRESSION. multiply product r_quad to the charge integer of the mol (for now i have assume is 1)
            OUTPUT
            -    msd, np array [n_windows,1]
+           -    msd in pm^2 / ps
         '''
         # number of columns n (molecules) and number of frames f
-        frames, n_mols = self.traj[0].shape[0:2]
+        frames, n_mols, _ = traj.shape
         #  sliding windows dimensions : frames, N
-        n_windows = ((frames - slice_dimension) // (
-                    skip + 1)) + 1  # +1 is needed for taking into account the first frame
+        slice_dimension = int(slice_dimension)
+        skip=int(skip)
+        n_windows = ((frames - slice_dimension) // (skip + 1)) + 1  # +1 is needed for taking into account the first frame
         R = np.zeros((n_windows, n_mols * slice_dimension))
         # loop repeated for the 3 component [X,Y,Z]
-        for i in range(coord.shape[-1]):
+        for i in range(traj.shape[-1]):
             # position are in nm (GROMACS format)
-            X = coord[:, :, i]
+            X = traj[:, :, i]
+            X = X * 1000  # nm -> pm
             first_idx = np.arange(n_mols * slice_dimension)  # index array of the first sliding window, flattened
             idx_matrix = first_idx[None, :] + n_mols * (skip + 1) * np.arange(n_windows)[:, None]
             windows = X.flatten()[idx_matrix]
@@ -260,16 +277,17 @@ def regression(msd, t, scaling=0.3):
 
 if __name__ == "__main__":
     #TESTING
-    obj = trajectory("test_files/#test.gro.1#")
+    obj = trajectory("test_files/tmp.gro")
     coord, res_names = obj.traj
+
     #print(coord[res_names=='al2'].shape)
     #print(coord[-1])
     #print(res_names.shape)
 
     # select portion of traj of al2
-    coord = coord[res_names=='al2'].reshape( (coord.shape[0],obj.composition['al2'],3) )
-    msd = msd_ii(coord, 'al2', slice_dimension=3, skip=0)
-    print(msd)
+    #coord = coord[res_names=='al2'].reshape( (coord.shape[0],obj.composition['al2'],3) )
+    #msd = msd_ii(coord, 'al2', slice_dimension=3, skip=0)
+    #print(msd)
 
     #MSD = msd_ii(coord[:,res_names=="emi",:],slice_dimension=100,skip=0)
     #t=np.arange(len(MSD))
