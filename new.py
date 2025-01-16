@@ -6,7 +6,7 @@ atomic_mass = { 'H':1.008,
                 'C':12.011,
                 'O':15.999,
                 'N':14.0067,
-                'Al':26.9815,
+                'Al':26.981539,
                 "He" : 4.00260,
                 "Li" : 7.0,
                 "Be" : 9.0121,
@@ -121,7 +121,7 @@ class trajectory:
             self.logger.print(f"Coordinates Shape: {CM.shape}\nTotal Frame Processed: {CM.shape[0]}\nNumber of Molecules: {CM.shape[1]}\nMolecular Types:\t{print_string}")
             return np.array(CM), np.array(res_names)
 
-    def msd_ii(self,traj, slice_dimension=3, skip=0):
+    def msd_ii(self,traj, slice_dimension=9, skip=0):
         '''
            Self-diffusion coefficient (i=j) from MSD
            INPUT
@@ -158,12 +158,10 @@ class trajectory:
                 slice_dimension)])  # columnwise stacking of the same submatrix of the first frame of each windows
             r = np.sum((windows, X0), axis=0)  # elementwise sum
             r_quad = np.multiply(r, r)  # elementwise self product
-            print(r_quad)
             R = np.sum((R, r_quad), axis=0)  # coordinate sum    DeltaR2 = DeltaX2 + DeltaY2 + DeltaZ2
-            print(R)
-            print("------")
         # mean over all the windows
         msd = np.mean(R, axis=0) #it's flatten
+        print(msd)
         # mean over all molecules
         msd = msd.reshape(slice_dimension, n_mols)
         msd = np.mean(msd, axis=1)   #mean over molecules
