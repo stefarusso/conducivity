@@ -6,7 +6,7 @@ atomic_mass = { 'H':1.008,
                 'C':12.011,
                 'O':15.999,
                 'N':14.0067,
-                'Al':26.981539,
+                'Al':26.98154,
                 "He" : 4.00260,
                 "Li" : 7.0,
                 "Be" : 9.0121,
@@ -18,7 +18,7 @@ atomic_mass = { 'H':1.008,
                 "Si" : 28.085,
                 "P"  : 30.97376,
                 "S"  : 32.07,
-                "Cl" : 35.45,
+                "Cl" : 35.45150,
                 "Ar" : 39.9,
                 "K"  : 39.0983,
                 "Ca" : 40.08,
@@ -49,11 +49,9 @@ class trajectory:
         self.logger.print("res_name selected: " + res_name)
         coord_section = coord[tmp==res_name].reshape( (coord.shape[0],self.composition[res_name],3)) # numpy try to fltten in 2D every try so it is needed to reshape the slice of the trajectory
         self.logger.print(coord_section.shape)
-
         #ask for timestep in ps
+        #ASK THE USER FOR THE TIMESTEP VALUE
         self.dt = 1
-
-
         msd = self.msd_ii(coord_section)
         print(msd)
         #self.msd = []                       # array [msd] (1,t)
@@ -121,7 +119,7 @@ class trajectory:
             self.logger.print(f"Coordinates Shape: {CM.shape}\nTotal Frame Processed: {CM.shape[0]}\nNumber of Molecules: {CM.shape[1]}\nMolecular Types:\t{print_string}")
             return np.array(CM), np.array(res_names)
 
-    def msd_ii(self,traj, slice_dimension=9, skip=0):
+    def msd_ii(self,traj, slice_dimension=11, skip=0):
         '''
            Self-diffusion coefficient (i=j) from MSD
            INPUT
@@ -147,21 +145,25 @@ class trajectory:
         R = np.zeros((n_windows, n_mols * slice_dimension))
         # loop repeated for the 3 component [X,Y,Z]
         for i in range(traj.shape[-1]):
+            print("...")
             # position are in nm (GROMACS format)
             X = traj[:, :, i]
             X = X * 1000  # nm -> pm
             first_idx = np.arange(n_mols * slice_dimension)  # index array of the first sliding window, flattened
             idx_matrix = first_idx[None, :] + n_mols * (skip + 1) * np.arange(n_windows)[:, None]
             windows = X.flatten()[idx_matrix]
+            print(windows.shape)
             X0 = - windows[:, : n_mols]
+            print(X0.shape)
             X0 = np.hstack([X0 for i in range(
                 slice_dimension)])  # columnwise stacking of the same submatrix of the first frame of each windows
-            r = np.sum((windows, X0), axis=0)  # elementwise sum
-            r_quad = np.multiply(r, r)  # elementwise self product
+            r = np.sum((windows, X0), axis=0)  # elementwise sum     DeltaX = X-X0
+            r_quad = np.multiply(r, r)  # elementwise self product    DeltaX2 = (X-X0)^2
+            print(r_quad.shape)
             R = np.sum((R, r_quad), axis=0)  # coordinate sum    DeltaR2 = DeltaX2 + DeltaY2 + DeltaZ2
         # mean over all the windows
+        print(R.reshape(n_windows*slice_dimension, n_mols ))
         msd = np.mean(R, axis=0) #it's flatten
-        print(msd)
         # mean over all molecules
         msd = msd.reshape(slice_dimension, n_mols)
         msd = np.mean(msd, axis=1)   #mean over molecules
@@ -278,7 +280,7 @@ if __name__ == "__main__":
     #TESTING
     obj = trajectory("test_files/unwrap.gro")
     coord, res_names = obj.traj
-
+    #print(coord[res_names == 'al2'])
     #print(coord[res_names=='al2'].shape)
     #print(coord[-1])
     #print(res_names.shape)
